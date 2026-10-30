@@ -224,6 +224,17 @@ class MainMenuState extends MusicBeatState
       startExitState(() -> new funkin.ui.credits.CreditsState());
     });
 
+    #if FEATURE_ONLINE
+    if (funkin.online.OnlineClient.isSupported())
+    {
+      // Small corner button, so the main menu's art and layout stay untouched.
+      var onlineButton:funkin.online.OnlineButton = new funkin.online.OnlineButton(FlxG.width - 260, 20, 240, 70, 'ONLINE',
+        () -> startExitState(() -> new funkin.online.OnlineMenuState()), 36);
+      onlineButton.scrollFactor.set(0, 0);
+      add(onlineButton);
+    }
+    #end
+
     // Reset position of menu items.
     final spacing:Float = 160;
     final top:Float = (FlxG.height - (spacing * (menuItems.length - 1))) / 2;

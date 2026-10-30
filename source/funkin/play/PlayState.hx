@@ -89,6 +89,13 @@ import funkin.api.newgrounds.Leaderboards;
 /**
  * Parameters used to initialize the PlayState.
  */
+#if FEATURE_ONLINE
+import funkin.online.OnlineMatch;
+import funkin.online.OnlineMatch.RemoteHandlers;
+import funkin.online.OnlineHud;
+import funkin.online.OnlineResultsState;
+#end
+
 typedef PlayStateParams =
 {
   /**
@@ -385,6 +392,43 @@ class PlayState extends MusicBeatSubState
    * If true, player will not gain or lose score from notes.
    */
   public var isPracticeMode:Bool = false;
+
+  /**
+   * Whether this is an online match against another player. See `funkin.online`.
+   * Online matches can't be paused-and-restarted, and never touch the saved scores.
+   */
+  public var isOnlineMatch(get, never):Bool;
+
+  function get_isOnlineMatch():Bool
+  {
+    #if FEATURE_ONLINE
+    return onlineMatch != null;
+    #else
+    return false;
+    #end
+  }
+
+  #if FEATURE_ONLINE
+  /**
+   * The online match being played, if any.
+   */
+  var onlineMatch:Null<OnlineMatch> = null;
+
+  /**
+   * The opponent's score and the connection status messages.
+   */
+  var onlineHud:Null<OnlineHud> = null;
+
+  /**
+   * `true` while waiting for the other player to finish loading, before the countdown.
+   */
+  var onlineWaitingToStart:Bool = false;
+
+  /**
+   * Seconds left before the countdown is released (used to start in step with the other player).
+   */
+  var onlineStartDelay:Float = -1;
+  #end
 
   /**
    * Whether the game is currently in Bot Play Mode.
@@ -769,6 +813,20 @@ class PlayState extends MusicBeatSubState
     previousCameraFollowPoint = params.cameraFollowPoint;
     mirrorSongData = params.mirrored ?? false;
 
+    #if FEATURE_ONLINE
+    onlineMatch = OnlineMatch.current;
+    if (onlineMatch != null)
+    {
+      // Both players must see the same notes in the same lanes.
+      mirrorSongData = false;
+      // Nobody dies in a versus match.
+      isPracticeMode = true;
+      isBotPlayMode = false;
+      startTimestamp = 0.0;
+      playbackRate = 1.0;
+    }
+    #end
+
     // Basic object initialization
 
     // TODO: Add something to toggle this on!
@@ -943,10 +1001,26 @@ class PlayState extends MusicBeatSubState
     // This gets set back to false when the chart actually starts.
     startingSong = true;
 
-    // Call a script event to start the countdown.
-    // Songs with cutscenes should call event.cancel().
-    // As long as they call `PlayState.instance.startCountdown()` later, the countdown will start.
-    startCountdown();
+    #if FEATURE_ONLINE
+    if (onlineMatch != null)
+    {
+      // Wait until the other player is ready too, so the countdowns line up. See `updateOnline()`.
+      onlineHud = new OnlineHud();
+      onlineHud.cameras = [camHUD];
+      onlineHud.zIndex = 5000;
+      add(onlineHud);
+      onlineWaitingToStart = true;
+      onlineHud.setStatus('Waiting for ${onlineMatch.opponentName}...');
+      onlineMatch.markLocalLoaded();
+    }
+    else
+    #end
+    {
+      // Call a script event to start the countdown.
+      // Songs with cutscenes should call event.cancel().
+      // As long as they call `PlayState.instance.startCountdown()` later, the countdown will start.
+      startCountdown();
+    }
 
     // Create the pause button.
     #if mobile
@@ -1033,6 +1107,10 @@ class PlayState extends MusicBeatSubState
     if (criticalFailure) return;
 
     super.update(elapsed);
+
+    #if FEATURE_ONLINE
+    if (onlineMatch != null) updateOnline(elapsed);
+    #end
 
     updateHealthBar();
     updateScoreText();
@@ -1929,6 +2007,12 @@ class PlayState extends MusicBeatSubState
 
   override public function destroy():Void
   {
+    #if FEATURE_ONLINE
+    // Leaving mid-song (pause menu, back button) tells the other player. Finishing normally already did that.
+    if (onlineMatch != null && !onlineMatch.localFinished) onlineMatch.finishLocal(Std.int(songScore), true);
+    if (onlineMatch != null && !onlineMatch.localFinished) OnlineMatch.end();
+    #end
+
     performCleanup();
 
     #if mobile
@@ -2145,7 +2229,12 @@ class PlayState extends MusicBeatSubState
     //
     // DAD
     //
-    var dad:Null<BaseCharacter> = CharacterDataParser.fetchCharacter(currentCharacterData.opponent);
+    var opponentCharacterId:String = currentCharacterData.opponent;
+    #if FEATURE_ONLINE
+    // In an online match the opponent is the other player, as the character they picked.
+    if (onlineMatch != null && CharacterDataParser.fetchCharacterData(onlineMatch.opponentCharacter) != null) opponentCharacterId = onlineMatch.opponentCharacter;
+    #end
+    var dad:Null<BaseCharacter> = CharacterDataParser.fetchCharacter(opponentCharacterId);
 
     if (dad != null)
     {
@@ -2180,7 +2269,11 @@ class PlayState extends MusicBeatSubState
     //
     // BOYFRIEND
     //
-    var boyfriend:Null<BaseCharacter> = CharacterDataParser.fetchCharacter(currentCharacterData.player);
+    var playerCharacterId:String = currentCharacterData.player;
+    #if FEATURE_ONLINE
+    if (onlineMatch != null && CharacterDataParser.fetchCharacterData(onlineMatch.ownCharacter) != null) playerCharacterId = onlineMatch.ownCharacter;
+    #end
+    var boyfriend:Null<BaseCharacter> = CharacterDataParser.fetchCharacter(playerCharacterId);
 
     if (boyfriend != null)
     {
@@ -2559,6 +2652,16 @@ class PlayState extends MusicBeatSubState
     }
 
     playerStrumline.applyNoteData(playerNoteData);
+
+    #if FEATURE_ONLINE
+    if (onlineMatch != null)
+    {
+      // Both players play the player's side of the chart. The opponent strumline displays the OTHER player's
+      // presses and hits on a copy of those same notes, and the chart's own opponent notes aren't used.
+      opponentNoteData = [for (note in playerNoteData) note.clone()];
+    }
+    #end
+
     opponentStrumline.applyNoteData(opponentNoteData);
   }
 
@@ -2751,6 +2854,95 @@ class PlayState extends MusicBeatSubState
   /**
      * Updates the position and contents of the score display.
      */
+  #if FEATURE_ONLINE
+  /**
+   * Per-frame online logic: wait for the other player before the countdown, then apply what they did to the opponent's side.
+   */
+  function updateOnline(elapsed:Float):Void
+  {
+    if (onlineMatch == null || onlineHud == null) return;
+
+    final startNow:Bool = onlineMatch.update(elapsed);
+
+    if (onlineWaitingToStart)
+    {
+      if (startNow)
+      {
+        onlineStartDelay = onlineMatch.startDelayMs() / 1000.0;
+        if (onlineMatch.opponentAborted) onlineHud.setStatus('${onlineMatch.opponentName} could not start');
+        else
+          onlineHud.setStatus('');
+      }
+
+      if (onlineStartDelay >= 0)
+      {
+        onlineStartDelay -= elapsed;
+        if (onlineStartDelay <= 0)
+        {
+          onlineWaitingToStart = false;
+          onlineStartDelay = -1;
+          startCountdown();
+        }
+      }
+    }
+    else
+    {
+      onlineMatch.drain(Conductor.instance.songPosition, onlineRemoteHandlers);
+
+      if (onlineMatch.opponentAborted) onlineHud.setStatus(onlineMatch.connectionLost ? 'Connection lost' : '${onlineMatch.opponentName} left');
+    }
+
+    onlineHud.setOpponent(onlineMatch.opponentName, onlineMatch.opponentScore, onlineMatch.opponentCombo, onlineMatch.opponentFinished,
+      onlineMatch.opponentAborted);
+  }
+
+  /**
+   * How the other player's actions show up on the opponent's strumline and character.
+   */
+  var onlineRemoteHandlers(get, never):RemoteHandlers;
+
+  function get_onlineRemoteHandlers():RemoteHandlers
+  {
+    return {
+      press: (dir:Int) -> opponentStrumline.playPress(dir),
+      release: (dir:Int) -> opponentStrumline.playStatic(dir),
+      hit: onlineRemoteHit,
+      miss: (dir:Int, noteTime:Float) -> currentStage?.getDad()?.playSingAnimation(dir, true)
+    };
+  }
+
+  /**
+   * The other player hit a note: find the matching note on our copy of the chart and hit it on the opponent's strumline.
+   */
+  function onlineRemoteHit(dir:Int, noteTime:Float, rating:String):Void
+  {
+    var best:Null<NoteSprite> = null;
+    var bestDistance:Float = Math.POSITIVE_INFINITY;
+
+    for (note in opponentStrumline.notes.members)
+    {
+      if (note == null || !note.alive || note.hasBeenHit || note.direction != dir) continue;
+
+      final distance:Float = Math.abs(note.strumTime - noteTime);
+      if (distance < bestDistance)
+      {
+        best = note;
+        bestDistance = distance;
+      }
+    }
+
+    // Past the "same note" tolerance there's nothing to match (it already scrolled off), just animate the character.
+    if (best != null && bestDistance <= Constants.HIT_WINDOW_MS)
+    {
+      opponentStrumline.hitNote(best);
+      if (best.holdNoteSprite != null) opponentStrumline.playNoteHoldCover(best.holdNoteSprite);
+    }
+
+    currentStage?.getDad()?.playSingAnimation(dir);
+    if (vocals != null && vocals.legacyVoiceSystem && !vocals.legacyVoiceUsesPlayer) vocals.opponentVolume = opponentVocalsVolume;
+  }
+  #end
+
   function updateScoreText():Void
   {
     // TODO: Add functionality for modules to update the score text.
@@ -2812,6 +3004,20 @@ class PlayState extends MusicBeatSubState
     for (note in opponentStrumline.notes.members)
     {
       if (note == null || !note.alive) continue;
+
+      #if FEATURE_ONLINE
+      if (onlineMatch != null)
+      {
+        // The other player decides whether these get hit. Once one is past its window it's a miss on their side:
+        // flag it so the strumline lets it scroll off the screen.
+        if (!note.hasBeenHit && !note.handledMiss && Conductor.instance.songPosition > note.strumTime + Constants.HIT_WINDOW_MS)
+        {
+          note.handledMiss = true;
+        }
+        continue;
+      }
+      #end
+
       var r = GRhythmUtil.processWindow(note, false);
       if (r.botplayHit)
       {
@@ -3053,6 +3259,10 @@ class PlayState extends MusicBeatSubState
       // Whether this direction is already held by another key.
       playerStrumline.pressKey(input.noteDirection, input.keyCode);
 
+      #if FEATURE_ONLINE
+      onlineMatch?.sendPress(input.noteDirection, Conductor.instance.songPosition);
+      #end
+
       // Don't credit or penalize inputs in Bot Play.
       if (isBotPlayMode) continue;
 
@@ -3106,6 +3316,10 @@ class PlayState extends MusicBeatSubState
       playerStrumline.playStatic(input.noteDirection);
 
       playerStrumline.releaseKey(input.noteDirection, input.keyCode);
+
+      #if FEATURE_ONLINE
+      onlineMatch?.sendRelease(input.noteDirection, Conductor.instance.songPosition);
+      #end
     }
 
     playerStrumline.noteVibrations.tryNoteVibration();
@@ -3151,6 +3365,10 @@ class PlayState extends MusicBeatSubState
 
     // Calling event.cancelEvent() skips all the other logic! Neat!
     if (event.eventCanceled) return;
+    #if FEATURE_ONLINE
+    onlineMatch?.sendHit(note.direction, Conductor.instance.songPosition, note.strumTime, event.judgement);
+    #end
+
     // Display the hit on the strums
     playerStrumline.hitNote(note, !event.isComboBreak);
     if (event.doesNotesplash) playerStrumline.playNoteSplash(note.noteData.getDirection());
@@ -3189,6 +3407,10 @@ class PlayState extends MusicBeatSubState
         if (pressArray[i]) indices.push(i);
       }
     }
+
+    #if FEATURE_ONLINE
+    onlineMatch?.sendMiss(note.direction, Conductor.instance.songPosition, note.strumTime);
+    #end
 
     applyScore(Scoring.getMissScore(), 'miss', healthChange, true);
 
@@ -3363,6 +3585,10 @@ class PlayState extends MusicBeatSubState
       if (Highscore.tallies.combo > Highscore.tallies.maxCombo) Highscore.tallies.maxCombo = Highscore.tallies.combo;
     }
     songScore += score;
+
+    #if FEATURE_ONLINE
+    onlineMatch?.sendScore(Std.int(songScore), Highscore.tallies.combo);
+    #end
   }
 
   /**
@@ -3464,6 +3690,18 @@ class PlayState extends MusicBeatSubState
     var event = new ScriptEvent(SONG_END, true);
     dispatchEvent(event);
     if (event.eventCanceled) return;
+
+    #if FEATURE_ONLINE
+    if (onlineMatch != null)
+    {
+      // Online matches skip the normal results: nothing gets saved or submitted, and both players' scores are compared instead.
+      onlineMatch.finishLocal(Std.int(songScore));
+      FlxG.sound.music?.stop();
+      vocals?.stop();
+      FlxG.switchState(() -> new OnlineResultsState());
+      return;
+    }
+    #end
 
     deathCounter = 0;
 
