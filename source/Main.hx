@@ -170,6 +170,12 @@ class Main extends Sprite
 
     WindowUtil.setVSyncMode(funkin.Preferences.vsyncMode);
 
+    #if mobile
+    // Detect how capable this device is, and tune the garbage collector / framerate cap for it.
+    // Has to run before the framerate below is read, since low-end devices get a lower cap.
+    funkin.mobile.util.PerformanceProfile.apply();
+    #end
+
     // Force a `FunkinCamera` to be the default camera.
     // This allows the blend mode shader to work everywhere.
     untyped FlxG.cameras = new funkin.graphics.FunkinCameraFrontEnd();

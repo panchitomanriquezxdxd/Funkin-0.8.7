@@ -35,7 +35,8 @@ class Preferences
 
     if (refreshRate < 60) refreshRate = 60;
 
-    return refreshRate;
+    // Low-end devices can't hold 90/120 FPS, and a steady 60 beats an unstable 120.
+    return funkin.mobile.util.PerformanceProfile.capFramerate(refreshRate);
     #else
     return Save?.instance?.options?.framerate ?? 60;
     #end
@@ -50,7 +51,8 @@ class Preferences
 
     if (refreshRate < 60) refreshRate = 60;
 
-    return refreshRate;
+    // Low-end devices can't hold 90/120 FPS, and a steady 60 beats an unstable 120.
+    return funkin.mobile.util.PerformanceProfile.capFramerate(refreshRate);
     #else
     var save:Save = Save.instance;
     save.options.framerate = value;
