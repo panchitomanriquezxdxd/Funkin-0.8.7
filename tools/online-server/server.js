@@ -7,12 +7,18 @@
  * the other joins with that code. After that the server just forwards a whitelist of messages between the two.
  * It never interprets gameplay data, so it needs no updates when the game changes.
  *
- * Wire format: one JSON object per line ("\n" terminated, UTF-8). See README.md.
+ * Two ways to connect, on the same port:
+ *  - plain TCP: one JSON object per line ("\n" terminated, UTF-8);
+ *  - WebSocket (`ws://` / `wss://` behind a proxy): one JSON object per text message.
+ * Plain HTTP requests get a short status page, which is what hosting services use as a health check.
+ * See README.md.
  *
  * Run:  node server.js [port]        (default port 7777, or $PORT)
  */
 
 const net = require('net');
+const { StringDecoder } = require('string_decoder');
+const ws = require('./websocket');
 
 const PROTOCOL_VERSION = 1;
 const DEFAULT_PORT = 7777;
@@ -81,7 +87,8 @@ function createRelayServer(options = {}) {
 
   function send(client, message) {
     if (client.socket.destroyed || !client.socket.writable) return;
-    client.socket.write(JSON.stringify(message) + '\n');
+    const text = JSON.stringify(message);
+    client.socket.write(client.webSocket ? ws.encodeFrame(ws.OP_TEXT, text) : text + '\n');
   }
 
   function sendError(client, code, msg) {
@@ -215,13 +222,52 @@ function createRelayServer(options = {}) {
     return sendError(client, 'bad_request', `Unknown message type "${msg.t}".`);
   }
 
+  /**
+   * One message from a client (a line over TCP, a text frame over WebSocket): size check, rate limit, then handle it.
+   * @returns {boolean} false if the client was disconnected.
+   */
+  function ingest(client, line) {
+    if (Buffer.byteLength(line) > MAX_LINE_BYTES) {
+      sendError(client, 'too_large', 'Message too large.');
+      client.socket.destroy();
+      return false;
+    }
+
+    const now = Date.now();
+    if (now - client.rateWindowStart >= RATE_WINDOW_MS) {
+      client.rateWindowStart = now;
+      client.rateCount = 0;
+      client.rateWarned = false;
+    }
+    client.rateCount++;
+    if (client.rateCount > RATE_HARD_LIMIT) {
+      client.socket.destroy();
+      return false;
+    }
+    if (client.rateCount > RATE_SOFT_LIMIT) {
+      if (!client.rateWarned) {
+        client.rateWarned = true;
+        sendError(client, 'rate_limited', 'Slow down.');
+      }
+      return true;
+    }
+
+    handleMessage(client, line);
+    return true;
+  }
+
+  const HEADER_LIMIT_BYTES = 8192;
+  const sockets = new Set(); // every open connection, so close() can drop them all
+
   const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
     socket.setNoDelay(true); // small realtime messages, don't wait to batch them
-    socket.setEncoding('utf8');
     socket.setTimeout(idleTimeoutMs);
 
     const client = {
       socket,
+      webSocket: false,
       room: null,
       slot: 0,
       name: 'Player',
@@ -230,45 +276,27 @@ function createRelayServer(options = {}) {
       rateCount: 0,
       rateWarned: false,
     };
+
+    // What the connection turned out to be, decided from its first bytes: 'tcp', 'http' or 'ws'.
+    let mode = null;
+    let pending = Buffer.alloc(0); // not yet classified, or an incomplete HTTP request
+    const decoder = new StringDecoder('utf8');
     let buffer = '';
+    let frames = null;
 
     socket.on('timeout', () => socket.destroy());
     socket.on('error', () => socket.destroy());
     socket.on('close', () => leaveRoom(client));
 
-    socket.on('data', (chunk) => {
-      buffer += chunk;
+    function onTcpData(chunk) {
+      buffer += decoder.write(chunk);
 
       let newline;
       while ((newline = buffer.indexOf('\n')) !== -1) {
         const line = buffer.slice(0, newline).trim();
         buffer = buffer.slice(newline + 1);
         if (line.length === 0) continue;
-
-        if (Buffer.byteLength(line) > MAX_LINE_BYTES) {
-          sendError(client, 'too_large', 'Message too large.');
-          return socket.destroy();
-        }
-
-        const now = Date.now();
-        if (now - client.rateWindowStart >= RATE_WINDOW_MS) {
-          client.rateWindowStart = now;
-          client.rateCount = 0;
-          client.rateWarned = false;
-        }
-        client.rateCount++;
-        if (client.rateCount > RATE_HARD_LIMIT) {
-          return socket.destroy();
-        }
-        if (client.rateCount > RATE_SOFT_LIMIT) {
-          if (!client.rateWarned) {
-            client.rateWarned = true;
-            sendError(client, 'rate_limited', 'Slow down.');
-          }
-          continue;
-        }
-
-        handleMessage(client, line);
+        if (!ingest(client, line)) return;
       }
 
       // A "line" that never ends is either a bug or an attack.
@@ -276,6 +304,82 @@ function createRelayServer(options = {}) {
         sendError(client, 'too_large', 'Message too large.');
         socket.destroy();
       }
+    }
+
+    function onWebSocketData(chunk) {
+      let messages;
+      try {
+        messages = frames.push(chunk);
+      } catch (e) {
+        socket.end(ws.closeFrame(e.closeCode || 1002));
+        return;
+      }
+
+      for (const message of messages) {
+        if (socket.destroyed) return;
+        if (message.opcode === ws.OP_TEXT) {
+          const line = message.payload.toString('utf8').trim();
+          if (line.length > 0 && !ingest(client, line)) return;
+        } else if (message.opcode === ws.OP_PING) {
+          socket.write(ws.encodeFrame(ws.OP_PONG, message.payload));
+        } else if (message.opcode === ws.OP_CLOSE) {
+          socket.end(ws.closeFrame(1000));
+          return;
+        } else if (message.opcode === ws.OP_BINARY) {
+          socket.end(ws.closeFrame(1003)); // only text is supported
+          return;
+        }
+      }
+    }
+
+    function onHttpData(chunk) {
+      pending = Buffer.concat([pending, chunk]);
+      const end = pending.indexOf('\r\n\r\n');
+      if (end === -1) {
+        if (pending.length > HEADER_LIMIT_BYTES) socket.destroy();
+        return;
+      }
+
+      const head = pending.subarray(0, end).toString('latin1').split('\r\n');
+      const rest = pending.subarray(end + 4);
+      const headers = {};
+      for (const headerLine of head.slice(1)) {
+        const colon = headerLine.indexOf(':');
+        if (colon > 0) headers[headerLine.slice(0, colon).trim().toLowerCase()] = headerLine.slice(colon + 1).trim();
+      }
+
+      const wantsUpgrade = (headers['upgrade'] || '').toLowerCase() === 'websocket';
+      if (wantsUpgrade && headers['sec-websocket-key'] && headers['sec-websocket-version'] === '13') {
+        mode = 'ws';
+        client.webSocket = true;
+        frames = new ws.FrameDecoder(MAX_LINE_BYTES);
+        socket.write(ws.handshakeResponse(headers['sec-websocket-key']));
+        pending = Buffer.alloc(0);
+        if (rest.length > 0) onWebSocketData(rest);
+        return;
+      }
+
+      // Anything else: a status page. Hosting services poll this to see if the app is up.
+      const body = `Funkin' online relay (protocol v${PROTOCOL_VERSION}), ${rooms.size} room(s).\n`;
+      socket.end(
+        'HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\n' +
+          `Content-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`
+      );
+    }
+
+    socket.on('data', (chunk) => {
+      if (mode === null) {
+        pending = Buffer.concat([pending, chunk]);
+        if (pending.length < 4) return; // too short to tell
+        // TCP clients open with a JSON object, never with an HTTP verb.
+        mode = pending.subarray(0, 4).toString('latin1') === 'GET ' ? 'http' : 'tcp';
+        chunk = pending;
+        pending = Buffer.alloc(0);
+      }
+
+      if (mode === 'tcp') onTcpData(chunk);
+      else if (mode === 'ws') onWebSocketData(chunk);
+      else onHttpData(chunk);
     });
   });
 
@@ -284,9 +388,7 @@ function createRelayServer(options = {}) {
     rooms,
     close: () =>
       new Promise((resolve) => {
-        for (const room of rooms.values()) {
-          for (const p of room.players) p.socket.destroy();
-        }
+        for (const socket of sockets) socket.destroy();
         server.close(() => resolve());
       }),
   };

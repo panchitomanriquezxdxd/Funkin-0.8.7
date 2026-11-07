@@ -5,9 +5,11 @@ import haxe.Timer;
 #if FEATURE_ONLINE
 import haxe.io.Bytes;
 import haxe.io.Eof;
+import funkin.online.WebSocketCodec;
 import sys.net.Host;
 import sys.net.Socket;
 import sys.thread.Deque;
+import sys.thread.Mutex;
 import sys.thread.Thread;
 #end
 
@@ -78,7 +80,7 @@ enum ConnectionState
 #if FEATURE_ONLINE
 private enum RawEvent
 {
-  SocketReady(socket:Socket);
+  SocketReady(socket:Socket, webSocket:Bool, writeLock:Mutex);
   Line(line:String);
   Closed(reason:String);
 }
@@ -322,7 +324,7 @@ class OnlineClient
     var parsed:Null<ServerAddress> = OnlineProtocol.parseServerAddress(address);
     if (parsed == null)
     {
-      localEvents.push(Error('bad_address', 'That server address is not valid. Use host or host:port.'));
+      localEvents.push(Error('bad_address', 'That server address is not valid. Use host, host:port or ws://host/path.'));
       return;
     }
 
@@ -339,14 +341,26 @@ class OnlineClient
     var queue:Deque<QueuedEvent> = inbox;
     var host:String = parsed.host;
     var port:Int = parsed.port;
+    var webSocket:Bool = parsed.webSocket;
+    var secure:Bool = parsed.secure;
+    var path:String = parsed.path;
 
     Thread.create(function()
     {
-      var newSocket:Socket = new Socket();
+      var newSocket:Socket = secure ? createSecureSocket(host) : new Socket();
+      var writeLock:Mutex = new Mutex();
+      var webSocketKey:String = WebSocketCodec.makeKey();
+
       try
       {
         newSocket.connect(new Host(host), port);
         newSocket.setFastSend(true); // Tiny realtime messages: don't wait to batch them (TCP_NODELAY).
+
+        if (webSocket)
+        {
+          var problem:Null<String> = openWebSocket(newSocket, host, port, path, webSocketKey, secure ? 443 : 80);
+          if (problem != null) throw problem;
+        }
       }
       catch (e:Dynamic)
       {
@@ -355,12 +369,17 @@ class OnlineClient
           newSocket.close();
         }
         catch (_:Dynamic) {}
-        queue.add({generation: myGeneration, event: Closed('Could not connect to $host:$port.')});
+
+        var detail:String = Std.isOfType(e, String) ? ' ${e}' : '';
+        queue.add({generation: myGeneration, event: Closed('Could not connect to $host:$port.$detail')});
         return;
       }
 
-      queue.add({generation: myGeneration, event: SocketReady(newSocket)});
-      readLoop(newSocket, myGeneration, queue);
+      queue.add({generation: myGeneration, event: SocketReady(newSocket, webSocket, writeLock)});
+
+      if (webSocket) readLoopWebSocket(newSocket, writeLock, myGeneration, queue);
+      else
+        readLoop(newSocket, myGeneration, queue);
     });
     #else
     localEvents.push(Disconnected('Online play is not available in this build.'));
@@ -368,6 +387,98 @@ class OnlineClient
   }
 
   #if FEATURE_ONLINE
+  /**
+   * A TLS socket for `wss://`. The server's certificate is checked against the system's trusted certificates.
+   * Build with `-DONLINE_INSECURE_TLS` to skip that check (for self-signed servers; the traffic is still encrypted).
+   */
+  static function createSecureSocket(host:String):Socket
+  {
+    var secureSocket:sys.ssl.Socket = new sys.ssl.Socket();
+    #if ONLINE_INSECURE_TLS
+    secureSocket.verifyCert = false;
+    #end
+    secureSocket.setHostname(host); // Hosting services serve many sites per address and pick the certificate by name.
+    return secureSocket;
+  }
+
+  /**
+   * Runs on the connection thread: do the WebSocket opening handshake.
+   * @return `null` on success, otherwise what went wrong.
+   */
+  static function openWebSocket(socket:Socket, host:String, port:Int, path:String, key:String, defaultPort:Int):Null<String>
+  {
+    socket.output.writeString(WebSocketCodec.handshakeRequest(host, port, path, key, defaultPort));
+    socket.output.flush();
+
+    var statusLine:String = StringTools.trim(socket.input.readLine());
+    var headers:Array<String> = [];
+    while (true)
+    {
+      var line:String = StringTools.trim(socket.input.readLine());
+      if (line.length == 0) break;
+      headers.push(line);
+      if (headers.length > 64) return 'The server sent too many headers.';
+    }
+
+    return WebSocketCodec.checkHandshakeResponse(statusLine, headers, key);
+  }
+
+  /**
+   * Runs on the reader thread for WebSocket connections: every text message is one line.
+   */
+  static function readLoopWebSocket(socket:Socket, writeLock:Mutex, myGeneration:Int, queue:Deque<QueuedEvent>):Void
+  {
+    var buffer:Bytes = Bytes.alloc(2048);
+    var parser:WebSocketFrameParser = new WebSocketFrameParser(8192);
+    var reason:String = 'The connection was closed.';
+    var open:Bool = true;
+
+    try
+    {
+      while (open)
+      {
+        var count:Int = socket.input.readBytes(buffer, 0, buffer.length);
+        if (count <= 0) break;
+
+        for (message in parser.push(buffer, count))
+        {
+          switch (message)
+          {
+            case Text(text):
+              queue.add({generation: myGeneration, event: Line(text)});
+            case Ping(payload):
+              writeLock.acquire();
+              try
+              {
+                socket.output.write(WebSocketCodec.encodeFrame(WebSocketCodec.OP_PONG, payload, WebSocketCodec.randomMask()));
+                socket.output.flush();
+              }
+              catch (e:Dynamic) {}
+              writeLock.release();
+            case Close(_):
+              open = false;
+          }
+        }
+
+        if (parser.error != null)
+        {
+          reason = 'The server sent invalid data.';
+          break;
+        }
+      }
+    }
+    catch (e:Eof) {}
+    catch (e:Dynamic) {}
+
+    try
+    {
+      socket.close();
+    }
+    catch (_:Dynamic) {}
+
+    queue.add({generation: myGeneration, event: Closed(reason)});
+  }
+
   /**
    * Runs on the reader thread: blocks on the socket and turns what arrives into lines.
    */
@@ -411,23 +522,34 @@ class OnlineClient
   /**
    * Runs on the writer thread: sends queued lines until it gets the `null` stop signal.
    */
-  static function writeLoop(socket:Socket, queue:Deque<Null<String>>):Void
+  static function writeLoop(socket:Socket, queue:Deque<Null<String>>, webSocket:Bool, writeLock:Mutex):Void
   {
     while (true)
     {
       var line:Null<String> = queue.pop(true);
       if (line == null) break;
 
+      writeLock.acquire();
       try
       {
-        socket.output.writeString(line);
+        if (webSocket)
+        {
+          // One message per frame, no line ending needed.
+          socket.output.write(WebSocketCodec.textFrame(StringTools.rtrim(line)));
+        }
+        else
+        {
+          socket.output.writeString(line);
+        }
         socket.output.flush();
       }
       catch (e:Dynamic)
       {
         // The reader notices the dead connection and reports it.
+        writeLock.release();
         break;
       }
+      writeLock.release();
     }
   }
 
@@ -435,11 +557,11 @@ class OnlineClient
   {
     switch (raw)
     {
-      case SocketReady(readySocket):
+      case SocketReady(readySocket, isWebSocket, writeLock):
         socket = readySocket;
         var queue:Deque<Null<String>> = new Deque();
         outbox = queue;
-        Thread.create(function() writeLoop(readySocket, queue));
+        Thread.create(function() writeLoop(readySocket, queue, isWebSocket, writeLock));
 
         state = Connected;
         lastPingAt = Timer.stamp();

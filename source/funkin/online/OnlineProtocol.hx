@@ -20,6 +20,21 @@ typedef ServerAddress =
 {
   var host:String;
   var port:Int;
+
+  /**
+   * Connect with WebSocket (`ws://`, `wss://`, `http://`, `https://`) instead of plain TCP.
+   */
+  var webSocket:Bool;
+
+  /**
+   * Encrypt the connection with TLS (`wss://`, `https://`). Only used with `webSocket`.
+   */
+  var secure:Bool;
+
+  /**
+   * The request path of a WebSocket connection, always starting with `/`.
+   */
+  var path:String;
 }
 
 /**
@@ -81,7 +96,13 @@ class OnlineProtocol
   }
 
   /**
-   * Parse what a player types in the server field: `host`, `host:port` or `tcp://host:port`.
+   * Parse what a player types in the server field.
+   *
+   * - `host`, `host:port` or `tcp://host:port`: plain TCP (default port 7777).
+   * - `ws://host[:port][/path]` or `wss://...`: WebSocket, for relays hosted on web services.
+   *   `http://` and `https://` are accepted too, so a site's address can be pasted as it is.
+   *   Default ports are 80, and 443 for `wss`/`https`.
+   *
    * IPv6 literals aren't supported.
    * @return The address, or `null` if it isn't valid.
    */
@@ -90,12 +111,48 @@ class OnlineProtocol
     if (text == null) return null;
 
     var value:String = text.trim();
-    if (value.startsWith('tcp://')) value = value.substr(6);
-    if (value.endsWith('/')) value = value.substr(0, value.length - 1);
+    var webSocket:Bool = false;
+    var secure:Bool = false;
+    var port:Int = DEFAULT_PORT;
+
+    final lower:String = value.toLowerCase();
+    if (lower.startsWith('tcp://'))
+    {
+      value = value.substr(6);
+    }
+    else if (lower.startsWith('wss://') || lower.startsWith('https://'))
+    {
+      value = value.substr(value.indexOf('://') + 3);
+      webSocket = true;
+      secure = true;
+      port = 443;
+    }
+    else if (lower.startsWith('ws://') || lower.startsWith('http://'))
+    {
+      value = value.substr(value.indexOf('://') + 3);
+      webSocket = true;
+      port = 80;
+    }
+
+    var path:String = '/';
+    if (webSocket)
+    {
+      final slash:Int = value.indexOf('/');
+      if (slash != -1)
+      {
+        path = value.substr(slash);
+        value = value.substr(0, slash);
+        if (~/[\s\x00-\x1f\x7f]/.match(path)) return null;
+      }
+    }
+    else if (value.endsWith('/'))
+    {
+      value = value.substr(0, value.length - 1);
+    }
+
     if (value.length == 0) return null;
 
     var host:String = value;
-    var port:Int = DEFAULT_PORT;
 
     var colon:Int = value.indexOf(':');
     if (colon != -1)
@@ -109,7 +166,7 @@ class OnlineProtocol
 
     if (host.length == 0 || host.length > 253 || !~/^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$/.match(host)) return null;
 
-    return {host: host, port: port};
+    return {host: host, port: port, webSocket: webSocket, secure: secure, path: path};
   }
 
   /**
