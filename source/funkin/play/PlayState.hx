@@ -2576,6 +2576,12 @@ class PlayState extends MusicBeatSubState
      */
   public function startCountdown():Void
   {
+    #if mobile
+    // Do the big garbage collection now, while nothing is timing-critical, rather than letting
+    // the collector pick a moment in the middle of the song.
+    funkin.mobile.util.PerformanceProfile.collectBeforeGameplay();
+    #end
+
     // If Countdown.performCountdown returns false, then the countdown was canceled by a script.
     var result:Bool = Countdown.performCountdown();
     if (!result) return;
