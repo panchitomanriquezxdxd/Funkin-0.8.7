@@ -2009,8 +2009,12 @@ class PlayState extends MusicBeatSubState
   {
     #if FEATURE_ONLINE
     // Leaving mid-song (pause menu, back button) tells the other player. Finishing normally already did that.
-    if (onlineMatch != null && !onlineMatch.localFinished) onlineMatch.finishLocal(Std.int(songScore), true);
-    if (onlineMatch != null && !onlineMatch.localFinished) OnlineMatch.end();
+    if (onlineMatch != null && !onlineMatch.localFinished)
+    {
+      onlineMatch.finishLocal(Std.int(songScore), true);
+      // Forget the match, or the next song played from the menus would start as an online match.
+      OnlineMatch.end();
+    }
     #end
 
     performCleanup();
