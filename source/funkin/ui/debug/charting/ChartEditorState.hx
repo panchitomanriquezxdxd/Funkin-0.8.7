@@ -753,6 +753,23 @@ class ChartEditorState extends UIState // UIState derives from MusicBeatState
    */
   var uiCamera:FlxCamera;
 
+  #if mobile
+  /**
+   * Two-finger gestures: dragging scrolls the chart.
+   */
+  var touchGestures:funkin.mobile.ui.TouchGestures = new funkin.mobile.ui.TouchGestures();
+
+  /**
+   * Floating buttons for the actions that normally need a keyboard.
+   */
+  var touchBar:Null<funkin.mobile.ui.EditorTouchBar> = null;
+
+  /**
+   * Scroll requested by the held scroll buttons, consumed by `handleScrollKeybinds`.
+   */
+  var touchScrollAmount:Float = 0;
+  #end
+
   // Audio
 
   /**
@@ -2511,6 +2528,9 @@ class ChartEditorState extends UIState // UIState derives from MusicBeatState
     this.applyPlatformShortcutText();
 
     createSubtitles();
+    #if mobile
+    createTouchBar();
+    #end
 
     // Setup the onClick listeners for the UI after it's been created.
     setupUIListeners();
@@ -2852,6 +2872,25 @@ class ChartEditorState extends UIState // UIState derives from MusicBeatState
 
     add(audioWaveforms);
   }
+
+  #if mobile
+  /**
+   * The floating buttons for touch screens: play/pause, undo/redo and scrolling.
+   */
+  function createTouchBar():Void
+  {
+    // On the left edge, away from the toolboxes and the playbar.
+    touchBar = new funkin.mobile.ui.EditorTouchBar(8, FlxG.height * 0.25);
+    touchBar.zIndex = 1000;
+    touchBar.addButton('PLAY', toggleAudioPlayback);
+    touchBar.addButton('UNDO', undoLastCommand);
+    touchBar.addButton('REDO', redoLastCommand);
+    touchBar.addButton('UP', () -> touchScrollAmount = -GRID_SIZE * 2, true);
+    touchBar.addButton('DOWN', () -> touchScrollAmount = GRID_SIZE * 2, true);
+    touchBar.useCamera(uiCamera);
+    add(touchBar);
+  }
+  #end
 
   function createSubtitles():Void
   {
@@ -3802,6 +3841,10 @@ class ChartEditorState extends UIState // UIState derives from MusicBeatState
 
     // These ones only happen if the modal dialog is not open.
     handleScrollKeybinds();
+    #if mobile
+    // The first finger of a two-finger gesture also arrives as a mouse press: don't let it place notes.
+    if (!touchGestures.active)
+    #end
     handleCursor();
 
     if (!(isHaxeUIFocused || isCursorOverHaxeUI))
@@ -4434,6 +4477,11 @@ class ChartEditorState extends UIState // UIState derives from MusicBeatState
    */
   function handleScrollKeybinds():Void
   {
+    #if mobile
+    // Keep the gesture state current even while the UI has focus, so a gesture never starts "mid-way".
+    touchGestures.update();
+    #end
+
     // Don't scroll when the user is interacting with the UI, unless a playbar button (the << >> ones) is pressed.
     if ((isHaxeUIFocused || isCursorOverHaxeUI) && playbarButtonPressed == null) return;
 
@@ -4463,6 +4511,23 @@ class ChartEditorState extends UIState // UIState derives from MusicBeatState
       scrollAmount = -50 * FlxG.mouse.deltaWheel.y;
       shouldPause = true;
     }
+
+    #if mobile
+    // Two fingers dragging = scroll, like a trackpad.
+    if (touchGestures.active)
+    {
+      scrollAmount = -touchGestures.panY;
+      shouldPause = true;
+    }
+
+    // Held UP / DOWN buttons.
+    if (touchScrollAmount != 0)
+    {
+      scrollAmount = touchScrollAmount;
+      touchScrollAmount = 0;
+      shouldPause = true;
+    }
+    #end
 
     // Up Arrow = Scroll Up
     if (upKeyHandler.activated && currentLiveInputStyle == None)

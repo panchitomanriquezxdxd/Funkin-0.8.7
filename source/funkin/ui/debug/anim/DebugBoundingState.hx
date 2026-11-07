@@ -40,6 +40,22 @@ class DebugBoundingState extends FlxState
   var txtGrp:FlxTypedGroup<FlxText>;
   var hudCam:FlxCamera;
   var curView:ANIMDEBUGVIEW = SPRITESHEET;
+
+  #if mobile
+  /**
+   * Two-finger gestures: pinch to zoom, drag to move the camera.
+   */
+  var touchGestures:funkin.mobile.ui.TouchGestures = new funkin.mobile.ui.TouchGestures();
+
+  /**
+   * Floating buttons for the actions that normally need a keyboard.
+   */
+  var touchBar:Null<funkin.mobile.ui.EditorTouchBar> = null;
+
+  static inline var MIN_ZOOM:Float = 0.1;
+  static inline var MAX_ZOOM:Float = 6.0;
+  static inline var BUTTON_ZOOM_STEP:Float = 1.05;
+  #end
   var spriteSheetView:FlxGroup;
   var offsetView:FlxGroup;
   var dropDownSetup:Bool = false;
@@ -205,6 +221,10 @@ class DebugBoundingState extends FlxState
     txtOffsetShit.y = FlxG.height - 20 - txtOffsetShit.height;
     offsetView.add(txtOffsetShit);
 
+    #if mobile
+    createTouchBar();
+    #end
+
     var characters:Array<String> = CharacterDataParser.listCharacterIds();
     characters.sort(SortUtil.alphabetically);
 
@@ -281,8 +301,79 @@ class DebugBoundingState extends FlxState
     txtGrp.clear();
   }
 
+  #if mobile
+  /**
+   * The floating buttons for touch screens.
+   */
+  function createTouchBar():Void
+  {
+    touchBar = new funkin.mobile.ui.EditorTouchBar(8, FlxG.height * 0.2);
+    touchBar.addButton('ZOOM+', () -> setCameraZoom(FlxG.camera.zoom * BUTTON_ZOOM_STEP), true);
+    touchBar.addButton('ZOOM-', () -> setCameraZoom(FlxG.camera.zoom / BUTTON_ZOOM_STEP), true);
+    touchBar.addButton('HOME', () ->
+    {
+      if (swagChar == null) return;
+      FlxG.camera.focusOn(swagChar.getMidpoint());
+      FlxG.camera.zoom = 0.95;
+    });
+    touchBar.addButton('PREV', () -> cycleAnimation(-1));
+    touchBar.addButton('NEXT', () -> cycleAnimation(1));
+    touchBar.addButton('PLAY', () ->
+    {
+      if (swagChar != null) playCharacterAnimation(currentAnimationName, false);
+    });
+    touchBar.addButton('ONION', () ->
+    {
+      if (onionSkinChar == null) return;
+      onionSkinChar.visible = !onionSkinChar.visible;
+      if (onionSkinChar.visible) updateOnionSkin();
+    });
+    touchBar.useCamera(hudCam);
+    add(touchBar);
+  }
+
+  function setCameraZoom(zoom:Float):Void
+  {
+    FlxG.camera.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom));
+  }
+
+  /**
+   * Select the next or previous animation, wrapping around.
+   */
+  function cycleAnimation(delta:Int):Void
+  {
+    final size:Int = offsetAnimationDropdown.dataSource.size;
+    if (size <= 0 || swagChar == null) return;
+
+    offsetAnimationDropdown.selectedIndex = (offsetAnimationDropdown.selectedIndex + delta + size) % size;
+    playCharacterAnimation(currentAnimationName, true);
+  }
+
+  /**
+   * Pinch to zoom, two-finger drag to move the camera.
+   */
+  function handleTouchGestures():Void
+  {
+    touchGestures.update();
+    if (!touchGestures.active) return;
+
+    // The first finger also arrives as a mouse press that would drag the character's offset.
+    movingCharacter = false;
+
+    setCameraZoom(FlxG.camera.zoom * touchGestures.pinchRatio);
+
+    // Screen pixels to world units.
+    FlxG.camera.scroll.x -= touchGestures.panX / FlxG.camera.zoom;
+    FlxG.camera.scroll.y -= touchGestures.panY / FlxG.camera.zoom;
+  }
+  #end
+
   override function update(elapsed:Float)
   {
+    #if mobile
+    handleTouchGestures();
+    #end
+
     if (FlxG.keys.justPressed.ONE)
     {
       var lv:DropDown = offsetEditorDialog.findComponent("swapper", DropDown);
@@ -315,6 +406,9 @@ class DebugBoundingState extends FlxState
         offsetView.active = true;
         offsetAnimationDropdown.show();
         offsetControls();
+        #if mobile
+        if (!touchGestures.active)
+        #end
         mouseOffsetMovement();
     }
 
