@@ -123,6 +123,15 @@ jobs:
         shell: bash
         run: haxelib run hmm install
 
+      # hmm clones Lime without its submodules (SDL, OpenAL, dr_libs...), and `lime rebuild` fails
+      # with "dr_flac.h: No such file or directory" without them.
+      - name: Fetch Lime native submodules
+        shell: bash
+        run: |
+          LIME_PATH=$(haxelib libpath lime | tr -d '\n')
+          git -C "$LIME_PATH" submodule update --init --recursive --depth 1
+          test -f "$LIME_PATH/project/lib/dr_libs/dr_flac.h"
+
       - name: Build hxcpp
         shell: bash
         run: |
