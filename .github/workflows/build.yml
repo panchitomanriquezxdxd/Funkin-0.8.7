@@ -27,6 +27,7 @@ jobs:
       matrix:
         include:
           # One APK containing both ABIs, installs on any ARM Android device.
+          # (This is also what a plain `lime build android` produces.)
           - name: universal
             arch_flags: "-armv7 -arm64"
           # 32-bit ARM only (armeabi-v7a).
@@ -177,12 +178,61 @@ jobs:
             -dname "CN=Funkin CI, O=Funkin, C=US"
 
           mkdir -p dist
-          "$BUILD_TOOLS/zipalign" -f -p 4 "$APK_IN" aligned.apk
+          # -P 16 page-aligns uncompressed .so files to 16 KB (a superset of the old 4 KB `-p`),
+          # which Android 15+ devices running a 16 KB page kernel require.
+          "$BUILD_TOOLS/zipalign" -f -P 16 4 "$APK_IN" aligned.apk
           "$BUILD_TOOLS/apksigner" sign --ks ci.keystore --ks-key-alias funkin \
             --ks-pass pass:funkin123 --key-pass pass:funkin123 \
             --out "dist/Funkin-0.8.7-${{ matrix.name }}.apk" aligned.apk
           "$BUILD_TOOLS/apksigner" verify "dist/Funkin-0.8.7-${{ matrix.name }}.apk"
           ls -lh dist
+
+      # Fail the job if the APK doesn't contain exactly the ABIs this matrix entry promises,
+      # or if a 64-bit library isn't 16 KB aligned (it would refuse to load on newer devices).
+      - name: Verify APK (ABIs + 16 KB alignment)
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="dist/Funkin-0.8.7-${{ matrix.name }}.apk"
+          BUILD_TOOLS="$ANDROID_SDK_ROOT/build-tools/35.0.0"
+          READELF="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+
+          case "${{ matrix.name }}" in
+            universal)   want="arm64-v8a armeabi-v7a" ;;
+            armeabi-v7a) want="armeabi-v7a" ;;
+            arm64)       want="arm64-v8a" ;;
+            *) echo "Unknown matrix entry"; exit 1 ;;
+          esac
+
+          have=$(unzip -Z1 "$APK" | sed -n 's#^lib/\([^/]*\)/libApplicationMain\.so$#\1#p' | sort | xargs)
+          want_sorted=$(echo "$want" | tr ' ' '\n' | sort | xargs)
+          echo "ABIs expected: [$want_sorted]  found: [$have]"
+          if [ "$have" != "$want_sorted" ]; then
+            echo "::error::ABI mismatch in $APK"
+            exit 1
+          fi
+
+          # Zip-level 16 KB alignment of the native libraries.
+          "$BUILD_TOOLS/zipalign" -c -P 16 -v 4 "$APK" > /dev/null
+
+          # ELF-level: every PT_LOAD segment of every 64-bit lib must be aligned to >= 16 KB.
+          mkdir -p verify-libs
+          for abi in arm64-v8a; do
+            if echo " $want_sorted " | grep -q " $abi "; then
+              for lib in $(unzip -Z1 "$APK" | grep -E "^lib/$abi/.*\.so$"); do
+                unzip -p "$APK" "$lib" > verify-libs/current.so
+                bad=0
+                for align in $("$READELF" -lW verify-libs/current.so | awk '$1=="LOAD"{print $NF}'); do
+                  if [ $((align)) -lt 16384 ]; then bad=1; fi
+                done
+                if [ "$bad" = "1" ]; then
+                  echo "::error::$lib has a LOAD segment aligned below 16 KB"
+                  exit 1
+                fi
+              done
+              echo "16 KB alignment OK for $abi libraries"
+            fi
+          done
 
       - name: Upload Android (${{ matrix.name }})
         uses: actions/upload-artifact@v4

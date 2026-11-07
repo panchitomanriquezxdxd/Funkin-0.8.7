@@ -34,6 +34,29 @@ Check [COMPILING.md](./COMPILING.md) if you haven’t done that yet.
     lime test android
     ```
 
+### Android architectures (universal APK)
+
+By default `lime build android` produces a **universal APK** containing both `arm64-v8a` (64-bit) and `armeabi-v7a` (32-bit),
+so the same file installs on old and new phones. You can narrow it down:
+
+| Command | Result |
+| --- | --- |
+| `lime build android` (or `-armv7 -arm64`) | Universal APK (`arm64-v8a` + `armeabi-v7a`) |
+| `lime build android -arm64` | 64-bit only |
+| `lime build android -armv7` | 32-bit only |
+| `lime build android -DEXCLUDE_ARMV7` | 64-bit only (older spelling of `-arm64`) |
+
+Before building for both ABIs for the first time, rebuild Lime's native libraries for both: `lime rebuild android -armv7 -arm64`.
+
+Related flags:
+- `-DANDROID_MIN_SDK=<level>` changes the minimum Android API level (default `28`). The same value is used for the NDK sysroot
+  and for Gradle's `minSdkVersion`, so they can't drift apart. Run `lime rebuild android -armv7 -arm64` again after changing it.
+- `-DPERFORMANCE_TIER=low|mid|high` forces a device performance class instead of detecting it from the device's RAM (useful for testing).
+- `-DMOBILE_FRAMERATE_CAP=60` caps the framerate on every mobile device (otherwise only low-end devices are capped to 60 FPS).
+- `-DFEATURE_DISPOSE_CPU_IMAGES` frees the CPU copy of temporary textures after they reach the GPU. Saves RAM, but read the flag's notes in `project.hxp` first.
+
+Release APKs built by CI are checked automatically: the job fails if the APK doesn't contain exactly the ABIs it should, or if the 64-bit libraries aren't 16 KB aligned (required by Android 15+ devices that use 16 KB pages).
+
 
 ### macOS
 

@@ -498,6 +498,21 @@ class Project extends HXProject
   static final FEATURE_TOUCH_CONTROLS:FeatureFlag = "FEATURE_TOUCH_CONTROLS";
 
   /**
+   * `-DFEATURE_DISPOSE_CPU_IMAGES`
+   * If this flag is enabled (mobile only), the CPU-side pixel copy of temporary textures is freed once the texture
+   * has been uploaded to the GPU. Saves a lot of RAM on low-end devices, but those textures can't be read from code
+   * anymore and can't be re-uploaded if the GPU context is lost. Disabled by default, test it on your devices first.
+   */
+  static final FEATURE_DISPOSE_CPU_IMAGES:FeatureFlag = "FEATURE_DISPOSE_CPU_IMAGES";
+
+  /**
+   * `-DFEATURE_ONLINE`
+   * If this flag is enabled, the online multiplayer mode (direct host/join over TCP) is compiled in.
+   * Requires `sys.net` sockets, so it is disabled on web builds.
+   */
+  static final FEATURE_ONLINE:FeatureFlag = "FEATURE_ONLINE";
+
+  /**
    * `-DFEATURE_TOUCH_HERE_TO_PLAY`
    * If this flag is enabled, the game will display a prompt to the user after the preloader completes,
    * requiring them to click anywhere on the screen to start the game.
@@ -685,10 +700,8 @@ class Project extends HXProject
 
     if (isAndroid())
     {
-      if (EXCLUDE_ARMV7.isEnabled(this))
-      {
-        this.excludeArchitectures.push(Architecture.ARMV7);
-      }
+      configureAndroidArchitectures();
+      configureAndroidMinSdk();
 
       if (isRelease())
       {
@@ -910,6 +923,12 @@ class Project extends HXProject
     // Should be true only on mobile builds.
     FEATURE_HAPTICS.apply(this, isMobile());
     FEATURE_TOUCH_CONTROLS.apply(this, isMobile());
+
+    // Should be true except on web builds (web has no raw TCP sockets).
+    FEATURE_ONLINE.apply(this, !isWeb());
+
+    // Opt-in, see the flag's documentation for the trade-offs.
+    FEATURE_DISPOSE_CPU_IMAGES.apply(this, false);
 
     // Should be true only on mobile release builds. Remember you can add the flag manually for testing.
     FEATURE_MOBILE_ADVERTISEMENTS.apply(this, (isMobile() && isRelease()) && envConfig != null);
@@ -1140,6 +1159,79 @@ class Project extends HXProject
     buildDir += "/";
 
     app.path = buildDir;
+  }
+
+  /**
+   * Decide which Android ABIs get compiled and packaged into the APK.
+   *
+   * Lime's Android platform starts from the default `[arm64-v8a, armeabi-v7a]` and then
+   * UNIONS whatever `-arm64` / `-armv7` you pass on top of it (see `HXProject.merge`),
+   * so those command line flags can never narrow the build on their own.
+   * To get a single-ABI build we have to explicitly exclude the other architecture.
+   *
+   * Resulting behaviour:
+   * - no flags, or both `-armv7 -arm64` → universal APK (`armeabi-v7a` + `arm64-v8a`)
+   * - only `-armv7`                      → 32-bit ARM only
+   * - only `-arm64`                      → 64-bit ARM only
+   * - `-DEXCLUDE_ARMV7`                  → 64-bit ARM only (kept for backwards compatibility)
+   */
+  function configureAndroidArchitectures():Void
+  {
+    final wantsArmV7:Bool = this.targetFlags.exists("armv7");
+    final wantsArm64:Bool = this.targetFlags.exists("arm64");
+    final excludeV7:Bool = EXCLUDE_ARMV7.isEnabled(this);
+
+    if (excludeV7 && wantsArmV7 && !wantsArm64)
+    {
+      error("`-DEXCLUDE_ARMV7` and `-armv7` contradict each other, there would be no architecture left to build.");
+      return;
+    }
+
+    if (excludeV7 || (wantsArm64 && !wantsArmV7))
+    {
+      this.excludeArchitectures.push(Architecture.ARMV7);
+      info('Android ABI selection: arm64-v8a only');
+    }
+    else if (wantsArmV7 && !wantsArm64)
+    {
+      this.excludeArchitectures.push(Architecture.ARM64);
+      info('Android ABI selection: armeabi-v7a only');
+    }
+    else
+    {
+      info('Android ABI selection: universal APK (arm64-v8a + armeabi-v7a)');
+    }
+  }
+
+  /**
+   * Optionally override the minimum Android API level with `-DANDROID_MIN_SDK=<level>`.
+   *
+   * Lime uses ONE value (`android.minimum-sdk-version`, default 28) for the NDK sysroot level
+   * (`HXCPP_ANDROID_PLATFORM`) AND for the Gradle `minSdkVersion`, so they can't drift apart,
+   * which is what usually causes "cannot locate symbol" crashes on older devices.
+   *
+   * Notes:
+   * - The default (Lime's 28 = Android 9) is left untouched unless you ask for something else.
+   * - If you lower it, also run `lime rebuild android` so the prebuilt native libraries are rebuilt
+   *   against the same level.
+   * - Some bundled Java dependencies (e.g. Play services/billing/ads) declare their own floor
+   *   (commonly 23). Gradle's manifest merger will tell you if you go below it.
+   */
+  function configureAndroidMinSdk():Void
+  {
+    // Like the feature flags, check both the defines and the haxedefs (`-DNAME=value` ends up in either).
+    final raw:Null<Dynamic> = this.defines.exists("ANDROID_MIN_SDK") ? this.defines.get("ANDROID_MIN_SDK") : this.haxedefs.get("ANDROID_MIN_SDK");
+    if (raw == null) return;
+
+    final level:Null<Int> = Std.parseInt(Std.string(raw));
+    if (level == null || level < 21 || level > 36)
+    {
+      error('`-DANDROID_MIN_SDK` must be an integer between 21 and 36 (got "${Std.string(raw)}").');
+      return;
+    }
+
+    this.config.set("android.minimum-sdk-version", level);
+    info('Android minimum SDK: $level');
   }
 
   function configureAndroid()
