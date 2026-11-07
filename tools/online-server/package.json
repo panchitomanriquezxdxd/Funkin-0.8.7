@@ -1,0 +1,14 @@
+{
+  "name": "funkin-online-relay",
+  "version": "1.0.0",
+  "description": "Tiny room-code relay server for Friday Night Funkin' online mode. No dependencies.",
+  "main": "server.js",
+  "license": "Apache-2.0",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

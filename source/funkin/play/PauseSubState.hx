@@ -59,11 +59,14 @@ class PauseSubState extends MusicBeatSubState
     {text: 'Resume', callback: resume},
     {
       text: 'Restart Song',
-      callback: restartPlayState
+      callback: restartPlayState,
+      // The other player can't restart with you.
+      filter: () -> !(PlayState.instance?.isOnlineMatch ?? false)
     },
     {
       text: 'Change Difficulty',
-      callback: switchMode.bind(_, Difficulty)
+      callback: switchMode.bind(_, Difficulty),
+      filter: () -> !(PlayState.instance?.isOnlineMatch ?? false)
     },
     {
       text: 'Enable Practice Mode',
