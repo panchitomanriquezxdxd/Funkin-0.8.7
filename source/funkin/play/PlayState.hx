@@ -2641,7 +2641,14 @@ class PlayState extends MusicBeatSubState
 
       var noteData:Int = songNote.data;
 
-      switch (songNote.getStrumlineIndex())
+      var strumlineIndex:Int = songNote.getStrumlineIndex();
+      #if FEATURE_ONLINE
+      // Online, the host plays the chart's player side and the guest plays the chart's opponent side. Each client sees
+      // its own notes on its own strumline (the one it controls), and the other player's notes on the opponent strumline.
+      if (onlineMatch != null && !onlineMatch.client.isHost) strumlineIndex = 1 - strumlineIndex;
+      #end
+
+      switch (strumlineIndex)
       {
         case 0:
           if (mirrorSongData) songNote.data = GRhythmUtil.mirrorNoteDirection(noteData);
@@ -2656,16 +2663,6 @@ class PlayState extends MusicBeatSubState
     }
 
     playerStrumline.applyNoteData(playerNoteData);
-
-    #if FEATURE_ONLINE
-    if (onlineMatch != null)
-    {
-      // Both players play the player's side of the chart. The opponent strumline displays the OTHER player's
-      // presses and hits on a copy of those same notes, and the chart's own opponent notes aren't used.
-      opponentNoteData = [for (note in playerNoteData) note.clone()];
-    }
-    #end
-
     opponentStrumline.applyNoteData(opponentNoteData);
   }
 

@@ -251,3 +251,121 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup Haxe
+        uses: krdlab/setup-haxe@v2
+        with:
+          haxe-version: ${{ env.HAXE_VERSION }}
+
+      - name: Install HMM
+        shell: bash
+        run: haxelib install hmm --quiet
+
+      - name: Install dependencies
+        shell: bash
+        run: haxelib run hmm install
+
+      # hmm clones Lime without its submodules, `lime rebuild` needs them (SDL, OpenAL, dr_libs...).
+      - name: Fetch Lime native submodules
+        shell: bash
+        run: |
+          LIME_PATH=$(haxelib libpath lime | tr -d '\r\n')
+          git -C "$LIME_PATH" submodule update --init --recursive --depth 1
+          test -f "$LIME_PATH/project/lib/dr_libs/dr_flac.h"
+
+      - name: Build hxcpp
+        shell: bash
+        run: |
+          HXCPP_PATH=$(haxelib libpath hxcpp | tr -d '\r\n')
+          cd "$HXCPP_PATH/tools/hxcpp"
+          haxe compile.hxml
+
+      - name: Rebuild Lime
+        shell: bash
+        run: haxelib run lime rebuild windows
+
+      - name: Build Windows
+        shell: bash
+        run: |
+          set -o pipefail
+          haxelib run lime build windows -release -DGITHUB_BUILD 2>&1 | tee build.log
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-windows
+          path: build.log
+          if-no-files-found: ignore
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $bin = "export/release/windows/bin"
+          if (-not (Test-Path "$bin/Funkin.exe")) {
+            Write-Error "Funkin.exe not found in $bin"
+            Get-ChildItem $bin -ErrorAction SilentlyContinue
+            exit 1
+          }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path "$bin/*" -DestinationPath "dist/Funkin-0.8.7-windows-x64.zip" -CompressionLevel Optimal
+          Get-ChildItem dist
+
+      - name: Upload Windows
+        uses: actions/upload-artifact@v4
+        with:
+          name: Funkin-Windows
+          path: dist/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  # Publishes the builds as a GitHub Release (marked as a pre-release) so they can be downloaded without logging in.
+  release:
+    name: Publish release
+    needs: [android, windows]
+    # Publish what was built, even if one platform failed.
+    if: ${{ !cancelled() && needs.android.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download builds
+        uses: actions/download-artifact@v4
+        with:
+          path: builds
+          pattern: Funkin-*
+          merge-multiple: true
+
+      - name: Create release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: build-${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          ls -lh builds
+          BRANCH="${GITHUB_REF_NAME}"
+          gh release create "$TAG" builds/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Build ${{ github.run_number }} (${BRANCH})" \
+            --notes "Automatic build of \`${BRANCH}\` at ${GITHUB_SHA::7}.
+
+          - **Android**: install \`Funkin-0.8.7-universal.apk\` on any ARM phone. The \`armeabi-v7a\` and \`arm64\` files are single-architecture versions.
+          - **Windows**: extract \`Funkin-0.8.7-windows-x64.zip\` and run \`Funkin.exe\`.
+
+          The APKs are signed with a throwaway CI key: uninstall a previous build signed with another key before installing."

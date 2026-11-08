@@ -41,7 +41,7 @@ Address formats the game accepts: `host`, `host:port`, `tcp://host:port`, `ws://
 1. Player A opens ONLINE, enters a name and the server address, and presses CREATE. A 5-character room code appears.
 2. Player B enters the same server and the code, and presses JOIN.
 3. Both can cycle their character. The host picks song and difficulty and presses START.
-4. Both players play the same (player-side) chart. Presses, releases, hits and misses are sent with the song position
+4. The host plays the chart's player side and the guest plays its opponent side, each on their own strumline. Presses, releases, hits and misses are sent with the song position
    and replayed on the opponent's strumline and character. Scores are compared on the results screen.
 
 Online matches use practice mode (nobody dies), cannot be restarted from the pause menu and never save scores.
