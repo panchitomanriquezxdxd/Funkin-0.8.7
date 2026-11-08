@@ -6,13 +6,23 @@ on:
       - main
       - master
   workflow_dispatch:
+    inputs:
+      all_apks:
+        description: "Also build the separate armeabi-v7a and arm64 APKs (slower, 3x the Android builds)"
+        type: boolean
+        default: false
+      publish_release:
+        description: "Publish the builds as a GitHub pre-release"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: true
+  # A manual run is never cancelled by another one, only pushes replace each other.
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 env:
   HAXE_VERSION: 4.3.7
@@ -21,21 +31,14 @@ jobs:
   android:
     name: Android (${{ matrix.name }})
     runs-on: ubuntu-latest
+    timeout-minutes: 120
 
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # One APK containing both ABIs, installs on any ARM Android device.
-          # (This is also what a plain `lime build android` produces.)
-          - name: universal
-            arch_flags: "-armv7 -arm64"
-          # 32-bit ARM only (armeabi-v7a).
-          - name: armeabi-v7a
-            arch_flags: "-armv7"
-          # 64-bit ARM only (arm64-v8a).
-          - name: arm64
-            arch_flags: "-arm64"
+        # Always the universal APK: one file with both ABIs (armeabi-v7a + arm64-v8a), installs on any ARM Android
+        # device. The single-architecture APKs are only built when asked for (`all_apks`).
+        include: ${{ fromJSON(github.event.inputs.all_apks == 'true' && '[{"name":"universal","arch_flags":"-armv7 -arm64"},{"name":"armeabi-v7a","arch_flags":"-armv7"},{"name":"arm64","arch_flags":"-arm64"}]' || '[{"name":"universal","arch_flags":"-armv7 -arm64"}]') }}
 
     steps:
       - name: Checkout
@@ -255,6 +258,7 @@ jobs:
   windows:
     name: Windows
     runs-on: windows-latest
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
@@ -336,7 +340,7 @@ jobs:
     name: Publish release
     needs: [android, windows]
     # Publish what was built, even if one platform failed.
-    if: ${{ !cancelled() && needs.android.result == 'success' }}
+    if: ${{ !cancelled() && needs.android.result == 'success' && github.event.inputs.publish_release != 'false' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
