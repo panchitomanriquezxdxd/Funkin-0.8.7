@@ -4,6 +4,7 @@ package funkin.ui.debug.charting.handlers;
 import flixel.util.FlxTimer;
 import funkin.data.song.importer.FNFLegacyData;
 import funkin.data.song.importer.FNFLegacyImporter;
+import funkin.data.song.importer.PsychEngineImporter;
 import funkin.data.song.importer.OsuManiaData;
 import funkin.data.song.importer.OsuManiaImporter;
 import funkin.data.song.importer.StepManiaData;
@@ -1131,6 +1132,8 @@ class ChartEditorDialogHandler
     {
       case 'legacy':
         'FNF Legacy';
+      case 'psych':
+        'Psych Engine';
       case 'stepmania':
         'StepMania';
       case 'osumania':
@@ -1141,7 +1144,7 @@ class ChartEditorDialogHandler
 
     var fileFilter = switch (format)
     {
-      case 'legacy':
+      case 'legacy' | 'psych':
         [FileUtil.FILE_FILTER_JSON];
       case 'stepmania':
         [FileUtil.FILE_FILTER_SM];
@@ -1230,6 +1233,23 @@ class ChartEditorDialogHandler
           songChartData = FNFLegacyImporter.migrateChartData(fnfLegacyData);
 
           loadedText = 'Loaded chart file';
+        case 'psych':
+          var psychResult:Null<PsychImportResult> = PsychEngineImporter.importChart(content, path.toString());
+
+          if (psychResult == null)
+          {
+            state.error('Failure',
+              'This does not look like a Psych Engine chart (${path.file}.${path.ext}).\nPick the song\'s .json chart, not events.json or a character file.');
+            return;
+          }
+
+          songMetadata = psychResult.metadata;
+          songChartData = psychResult.chart;
+
+          loadedText = 'Loaded Psych Engine chart as "${psychResult.difficulty}"';
+          var skippedNotes:String = psychResult.skippedNoteTypes > 0 ? '\n${psychResult.skippedNoteTypes} notes with special types were imported as normal notes.' : '';
+          var skippedEvents:String = psychResult.skippedEvents.length > 0 ? '\nEvents left out (no V-Slice equivalent): ${psychResult.skippedEvents.join(', ')}.' : '';
+          loadedText += skippedNotes + skippedEvents;
         case 'stepmania':
           var stepmaniaData:Null<StepManiaData> = StepManiaImporter.parseStepManiaFile(content);
 

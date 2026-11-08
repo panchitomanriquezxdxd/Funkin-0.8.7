@@ -33,6 +33,15 @@ class ChartEditorWelcomeDialog extends ChartEditorBaseDialog
     this.splashCreateFromSongErectOnly.onClick = _ -> onClickLinkCreateErectOnly();
     this.splashCreateFromSongBasicErect.onClick = _ -> onClickLinkCreateBasicErect();
     this.splashImportChartLegacy.onClick = _ -> onClickLinkImport('legacy');
+
+    // Added from code, since the dialog layout lives in the assets repository.
+    var psychLink:haxe.ui.components.Link = new haxe.ui.components.Link();
+    psychLink.id = 'splashImportChartPsych';
+    psychLink.width = this.splashImportChartLegacy.width;
+    psychLink.percentWidth = 100;
+    psychLink.text = 'Psych Engine (all versions)';
+    psychLink.onClick = _ -> onClickLinkImport('psych');
+    this.splashImportChartLegacy.parentComponent?.addComponentAt(psychLink, 1);
     this.splashImportChartOsuMania.onClick = _ -> onClickLinkImport('osumania');
     this.splashImportChartStepMania.onClick = _ -> onClickLinkImport('stepmania');
 
