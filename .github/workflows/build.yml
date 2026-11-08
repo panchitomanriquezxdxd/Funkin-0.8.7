@@ -317,11 +317,14 @@ jobs:
         shell: pwsh
         run: |
           $bin = "export/release/windows/bin"
-          if (-not (Test-Path "$bin/Funkin.exe")) {
-            Write-Error "Funkin.exe not found in $bin"
+          # The executable is named after EXECUTABLE_NAME in project.hxp, so look for it instead of hardcoding it.
+          $exe = Get-ChildItem -Path $bin -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) {
+            Write-Error "No .exe found in $bin"
             Get-ChildItem $bin -ErrorAction SilentlyContinue
             exit 1
           }
+          Write-Host "Packaging $($exe.Name)"
           New-Item -ItemType Directory -Force dist | Out-Null
           Compress-Archive -Path "$bin/*" -DestinationPath "dist/Funkin-0.8.7-windows-x64.zip" -CompressionLevel Optimal
           Get-ChildItem dist
@@ -370,6 +373,6 @@ jobs:
             --notes "Automatic build of \`${BRANCH}\` at ${GITHUB_SHA::7}.
 
           - **Android**: install \`Funkin-0.8.7-universal.apk\` on any ARM phone. The \`armeabi-v7a\` and \`arm64\` files are single-architecture versions.
-          - **Windows**: extract \`Funkin-0.8.7-windows-x64.zip\` and run \`Funkin.exe\`.
+          - **Windows**: extract \`Funkin-0.8.7-windows-x64.zip\` and run \`Funkin087.exe\`.
 
           The APKs are signed with a throwaway CI key: uninstall a previous build signed with another key before installing."
