@@ -6235,6 +6235,11 @@ class ChartEditorState extends UIState // UIState derives from MusicBeatState
     stopWelcomeMusic();
     // TODO: PR Flixel to make onComplete nullable.
     if (audioInstTrack != null) audioInstTrack.onComplete = null;
+
+    #if mobile
+    releaseHeavyResources();
+    #end
+
     FlxG.switchState(() -> new MainMenuState());
 
     resetWindowTitle();
@@ -7599,6 +7604,11 @@ class ChartEditorState extends UIState // UIState derives from MusicBeatState
     funkin.play.GameOverSubState.reset();
     funkin.play.PauseSubState.reset();
     funkin.play.Countdown.reset();
+
+    #if mobile
+    // The editor's memory is garbage now and the next state hasn't loaded anything yet: the best time to collect it.
+    funkin.mobile.util.PerformanceProfile.collectBeforeGameplay();
+    #end
   }
 
   function applyCanQuickSave():Void
@@ -7634,6 +7644,39 @@ class ChartEditorState extends UIState // UIState derives from MusicBeatState
   {
     WindowUtil.setWindowTitle('Friday Night Funkin\'');
   }
+
+  #if mobile
+  /**
+   * Phones with little RAM were being killed when leaving the editor: the old editor (decoded audio, waveforms, rendered
+   * notes) is still in memory while the next menu loads. Free the biggest parts first, so the peak is lower.
+   */
+  function releaseHeavyResources():Void
+  {
+    // Stop and release the audio, the largest thing held in memory.
+    if (audioInstTrack != null)
+    {
+      audioInstTrack.stop();
+      audioInstTrack.destroy();
+      audioInstTrack = null;
+    }
+
+    if (audioVocalTrackGroup != null)
+    {
+      audioVocalTrackGroup.stop();
+      audioVocalTrackGroup.clear();
+    }
+
+    audioWaveforms.clear();
+    audioInstTrackData.clear();
+    audioVocalTrackData.clear();
+
+    // The grid's note sprites are recreated on demand, and aren't needed any more.
+    renderedNotes.clear();
+    renderedHoldNotes.clear();
+    renderedEvents.clear();
+    renderedSelectionSquares.clear();
+  }
+  #end
 
   /**
    * Convert a note data value into a chart editor grid column number.
