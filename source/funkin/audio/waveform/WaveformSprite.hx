@@ -182,7 +182,9 @@ class WaveformSprite extends MeshRender
   {
     super.update(elapsed);
 
-    if (forceUpdate || isWaveformDirty)
+    // A hidden waveform doesn't need its vertices rebuilt. It stays dirty, and is rebuilt as soon as it is shown again
+    // (`set_visible` marks it dirty). This matters a lot on phones, where the editor scrolls constantly.
+    if ((forceUpdate || isWaveformDirty) && visible)
     {
       // Recalculate the waveform vertices.
       drawWaveform();

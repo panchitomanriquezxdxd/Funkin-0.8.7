@@ -251,6 +251,11 @@ class ChartEditorAudioHandler
     waveformSprite.height = (ChartEditorState.GRID_SIZE) * 16;
     waveformSprite.width = (ChartEditorState.GRID_SIZE) * 2;
     waveformSprite.time = 0;
+    #if mobile
+    // Waveforms are the most expensive part of the editor to keep up to date. On phones they start hidden,
+    // and can be turned on from View > Waveforms.
+    waveformSprite.visible = false;
+    #end
     waveformSprite.duration = Conductor.instance.getStepTimeInMs(16) * 0.001;
     waveformSprite.iconId = charType;
     return waveformSprite;

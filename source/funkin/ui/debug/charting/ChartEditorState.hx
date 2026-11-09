@@ -2870,6 +2870,9 @@ class ChartEditorState extends UIState // UIState derives from MusicBeatState
     add(healthIconBF);
     healthIconBF.zIndex = 30;
 
+    #if mobile
+    audioWaveforms.visible = false; // See `ChartEditorAudioHandler.initWaveformSprite`.
+    #end
     add(audioWaveforms);
   }
 
