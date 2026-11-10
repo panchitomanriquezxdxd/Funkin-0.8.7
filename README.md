@@ -64,3 +64,16 @@ Full credits can be found in-game, or in the `credits.json` file which is locate
 - [Tom Fulp](https://twitter.com/tomfulp) - For being a great guy and for Newgrounds
 - [JohnnyUtah](https://twitter.com/JohnnyUtahNG/) - Voice of Tankman
 - [L0Litsmonica](https://twitter.com/L0Litsmonica) - Voice of Mommy Mearest
+
+## Como Jugar Online?
+
+En una PC tienen que tener terminal y copiar este comando:
+
+git clone https://github.com/panchitomanriquezxdxd/Funkin-0.8.7.git
+cd Funkin-0.8.7
+git checkout feature/online-android-v2
+node tools/online-server/server.js 7777
+
+y listo
+
+[posdata: funciona solamente con la IP del WiFi cuando estás en modo Online]
