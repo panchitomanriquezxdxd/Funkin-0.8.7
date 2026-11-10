@@ -330,13 +330,33 @@ abstract class BaseRegistry<T:(IRegistryEntry<J> & Constructible<EntryConstructo
    */
   abstract function createScriptedEntry(clsName:String):Null<T>;
 
+  /**
+   * Why the last entry failed to load, in plain text, or `null` if nothing has failed.
+   * Shown by the editors, since the log isn't visible on a phone.
+   */
+  public var lastLoadError:Null<String> = null;
+
   function printErrors(errors:Array<json2object.Error>, id:String = ''):Void
   {
     trace(' $registryId '.bold().bg_note_down() + ' ERROR '.error() + 'Failed to parse entry data: ${id}');
 
+    var lines:Array<String> = [];
     for (error in errors)
     {
       DataError.printError(error);
+      if (lines.length < 4) lines.push('- ' + DataError.describe(error));
     }
+
+    if (errors.length > 4) lines.push('...and ${errors.length - 4} more.');
+    lastLoadError = lines.join('\n');
+  }
+
+  /**
+   * Record a problem that isn't a parse error (an unsupported version, for example).
+   */
+  function reportLoadError(message:String):Void
+  {
+    trace(' $registryId '.bold().bg_note_down() + ' ERROR '.error() + message);
+    lastLoadError = message;
   }
 }

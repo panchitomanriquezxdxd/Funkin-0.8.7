@@ -44,6 +44,40 @@ class DataError
     }
   }
 
+  /**
+   * A short, plain-text description of an error, for showing to the user (the colored `printError` output only goes to the log).
+   */
+  public static function describe(error:Error):String
+  {
+    switch (error)
+    {
+      case IncorrectType(vari, expected, pos):
+        return 'Field "$vari" should be of type "$expected"${where(pos)}';
+      case IncorrectEnumValue(value, expected, pos):
+        return 'Invalid value "$value" (expected $expected)${where(pos)}';
+      case InvalidEnumConstructor(value, expected, pos):
+        return 'Invalid value "$value" (expected $expected)${where(pos)}';
+      case UninitializedVariable(vari, pos):
+        return 'Missing required field "$vari"${where(pos)}';
+      case UnknownVariable(vari, pos):
+        return 'Unknown field "$vari"${where(pos)}';
+      case ParserError(message, pos):
+        return 'JSON error: $message${where(pos)}';
+      case CustomFunctionException(e, pos):
+        return (Std.isOfType(e, String) ? '$e' : Std.string(e)) + where(pos);
+      default:
+        return Std.string(error);
+    }
+  }
+
+  static function where(pos:Position):String
+  {
+    if (pos == null || pos.lines == null || pos.lines.length == 0) return '';
+    var first:Int = pos.lines[0].number;
+    var last:Int = pos.lines[pos.lines.length - 1].number;
+    return first == last ? ' (line $first)' : ' (lines $first-$last)';
+  }
+
   public static function printUnknownError(e:Dynamic):Void
   {
     switch (Type.typeof(e))

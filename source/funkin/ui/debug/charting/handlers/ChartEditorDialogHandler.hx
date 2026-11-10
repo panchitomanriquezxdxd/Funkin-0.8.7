@@ -53,6 +53,16 @@ using Lambda;
 @:nullSafety @:access(funkin.ui.debug.charting.ChartEditorState)
 class ChartEditorDialogHandler
 {
+  /**
+   * Why the last song file failed to load (the parse errors, or an unsupported version), ready to append to an error message.
+   * The log with these details isn't visible on a phone.
+   */
+  static function loadErrorDetails():String
+  {
+    var reason:Null<String> = SongRegistry.instance.lastLoadError;
+    return (reason == null || reason == '') ? '' : '\n' + reason;
+  }
+
   // Paths to HaxeUI layout files for each dialog.
   static final CHART_EDITOR_DIALOG_UPLOAD_INST_LAYOUT:String = Paths.ui('chart-editor/dialogs/upload-inst');
   static final CHART_EDITOR_DIALOG_SONG_METADATA_LAYOUT:String = Paths.ui('chart-editor/dialogs/song-metadata');
@@ -933,7 +943,7 @@ class ChartEditorDialogHandler
       if (songMetadataVersion == null)
       {
         // Tell the user the load was not successful.
-        state.error('Failure', 'Could not parse metadata file version (${path.file}.${path.ext})');
+        state.error('Failure', 'Could not parse metadata file version (${path.file}.${path.ext}).\nThe file needs a "version" field with a version number, like "2.2.4".');
         return;
       }
 
@@ -943,7 +953,7 @@ class ChartEditorDialogHandler
       if (songMetadataVariation == null)
       {
         // Tell the user the load was not successful.
-        state.error('Failure', 'Could not load metadata file (${path.file}.${path.ext})');
+        state.error('Failure', 'Could not load metadata file (${path.file}.${path.ext})' + loadErrorDetails());
         return;
       }
 
@@ -975,7 +985,7 @@ class ChartEditorDialogHandler
           if (songMetadataVersion == null)
           {
             // Tell the user the load was not successful.
-            state.error('Failure', 'Could not parse metadata file version (${selectedFile.name})');
+            state.error('Failure', 'Could not parse metadata file version (${selectedFile.name}).\nThe file needs a "version" field with a version number, like "2.2.4".');
             return;
           }
 
@@ -1000,7 +1010,7 @@ class ChartEditorDialogHandler
           else
           {
             // Tell the user the load was unsuccessful.
-            state.error('Failure', 'Failed to load metadata file (${selectedFile.name})');
+            state.error('Failure', 'Failed to load metadata file (${selectedFile.name})' + loadErrorDetails());
           }
         }
       });
@@ -1017,7 +1027,7 @@ class ChartEditorDialogHandler
       if (songChartDataVersion == null)
       {
         // Tell the user the load was not successful.
-        state.error('Failure', 'Could not parse chart data file version (${path.file}.${path.ext})');
+        state.error('Failure', 'Could not parse chart data file version (${path.file}.${path.ext}).\nThe file needs a "version" field with a version number, like "2.0.0".');
         return;
       }
 
@@ -1043,7 +1053,7 @@ class ChartEditorDialogHandler
       else
       {
         // Tell the user the load was unsuccessful.
-        state.error('Failure', 'Failed to load chart data file (${path.file}.${path.ext})');
+        state.error('Failure', 'Failed to load chart data file (${path.file}.${path.ext})' + loadErrorDetails());
       }
     };
 
@@ -1061,7 +1071,7 @@ class ChartEditorDialogHandler
           if (songChartDataVersion == null)
           {
             // Tell the user the load was not successful.
-            state.error('Failure', 'Could not parse chart data file version (${selectedFile.name})');
+            state.error('Failure', 'Could not parse chart data file version (${selectedFile.name}).\nThe file needs a "version" field with a version number, like "2.0.0".');
             return;
           }
 
@@ -1083,6 +1093,10 @@ class ChartEditorDialogHandler
             #else
             label.text = 'Chart data file (click to browse)\n${selectedFile.name}';
             #end
+          }
+          else
+          {
+            state.error('Failure', 'Failed to load chart data file (${selectedFile.name})' + loadErrorDetails());
           }
         }
       });

@@ -153,10 +153,16 @@ class ChartEditorDifficultyToolbox extends ChartEditorBaseToolbox
 
         var songMetadataVersion:Null<thx.semver.Version> = VersionUtil.getVersionFromJSON(data);
 
-        var songMetadata:Null<SongMetadata> = null;
-        if (VersionUtil.validateVersion(songMetadataVersion,
-          SongRegistry.SONG_METADATA_VERSION_RULE)) songMetadata = SongRegistry.instance.parseEntryMetadataRawWithMigration(data, fileReference.name,
-            songMetadataVersion);
+        if (songMetadataVersion == null)
+        {
+          // Without a version there is nothing to check it against (this used to crash).
+          chartEditorState.error('Failure',
+            'Could not read the version of the metadata file (${fileReference.name}).\nThe file needs a "version" field, like "2.2.4".');
+          return;
+        }
+
+        // Older versions are migrated, like everywhere else metadata is loaded.
+        var songMetadata:Null<SongMetadata> = SongRegistry.instance.parseEntryMetadataRawWithMigration(data, fileReference.name, songMetadataVersion);
 
         if (songMetadata != null)
         {
@@ -170,7 +176,8 @@ class ChartEditorDifficultyToolbox extends ChartEditorBaseToolbox
         }
         else
         {
-          chartEditorState.error('Failure', 'Failed to load metadata file (${fileReference.name})');
+          var reason:Null<String> = SongRegistry.instance.lastLoadError;
+          chartEditorState.error('Failure', 'Failed to load metadata file (${fileReference.name})' + (reason == null ? '' : '\n' + reason));
         }
       });
     };

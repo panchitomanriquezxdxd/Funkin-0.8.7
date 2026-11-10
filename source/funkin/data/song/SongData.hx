@@ -435,6 +435,7 @@ class SongPlayData implements ICloneable<SongPlayData>
   /**
    * The note style used by this song.
    */
+  @:optional @:default(funkin.util.Constants.DEFAULT_NOTE_STYLE)
   public var noteStyle:String;
 
   /**

@@ -237,6 +237,8 @@ class SongRegistry extends BaseRegistry<Song, SongMetadata, SongEntryParams> imp
   public function parseEntryMetadataRawWithMigration(contents:String, ?fileName:String = 'raw', version:thx.semver.Version,
       ?variation:String):Null<SongMetadata>
   {
+    lastLoadError = null;
+
     // If a version rule is not specified, do not check against it.
     if (SONG_METADATA_VERSION_RULE == null || VersionUtil.validateVersion(version, SONG_METADATA_VERSION_RULE))
     {
@@ -252,7 +254,9 @@ class SongRegistry extends BaseRegistry<Song, SongMetadata, SongEntryParams> imp
     }
     else
     {
-      throw '[${registryId}] Metadata entry "${fileName}" does not support migration to version ${SONG_METADATA_VERSION_RULE}.';
+      // Not an exception: the editors show this to the user, and a crash screen helps nobody.
+      reportLoadError('Metadata version ${version} is not supported. Supported versions: 2.0.x, 2.1.x and ${SONG_METADATA_VERSION_RULE}.');
+      return null;
     }
   }
 
@@ -450,6 +454,8 @@ class SongRegistry extends BaseRegistry<Song, SongMetadata, SongEntryParams> imp
   public function parseEntryChartDataRawWithMigration(contents:String, ?fileName:String = 'raw', version:thx.semver.Version,
       ?variation:String):Null<SongChartData>
   {
+    lastLoadError = null;
+
     // If a version rule is not specified, do not check against it.
     if (SONG_CHART_DATA_VERSION_RULE == null || VersionUtil.validateVersion(version, SONG_CHART_DATA_VERSION_RULE))
     {
@@ -457,7 +463,8 @@ class SongRegistry extends BaseRegistry<Song, SongMetadata, SongEntryParams> imp
     }
     else
     {
-      throw '[${registryId}] Chart entry "${fileName}" does not support migration to version ${SONG_CHART_DATA_VERSION_RULE}.';
+      reportLoadError('Chart data version ${version} is not supported. Supported version: ${SONG_CHART_DATA_VERSION_RULE}.');
+      return null;
     }
   }
 
