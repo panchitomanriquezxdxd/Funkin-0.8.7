@@ -98,6 +98,8 @@ class PolymodHandler
     #if sys
     // Create the mod root if it doesn't exist.
     createModRoot();
+    // Turn the songs in `psych-songs/` into a generated mod, so Psych Engine charts can be played as they are.
+    funkin.data.song.importer.PsychSongLibrary.sync(MOD_FOLDER);
     #end
     trace('Initializing Polymod (using all mods)...');
     loadModsByDir(getAllModDirs());

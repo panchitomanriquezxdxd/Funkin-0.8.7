@@ -80,3 +80,20 @@ node tools/online-server/server.js 7777
 And that's it.
 
 [P.S.: This only works with the Wi-Fi IP address when you're online.]
+
+## ¿Cómo jugar charts de Psych Engine?
+
+V-Slice sigue funcionando igual; los charts de Psych se **añaden** a los de V-Slice.
+
+1. Junto a la carpeta `mods` crea la carpeta `psych-songs` y, dentro, una carpeta por canción:
+
+   ```
+   psych-songs/Mi Cancion/mi-cancion.json        (chart, cualquier versión de Psych)
+   psych-songs/Mi Cancion/mi-cancion-hard.json   (otras dificultades: -easy, -hard)
+   psych-songs/Mi Cancion/Inst.ogg
+   psych-songs/Mi Cancion/Voices.ogg             (opcional)
+   ```
+
+2. Abre el juego. Las canciones se convierten solas (a un mod generado en `mods/psych-songs`) y aparecen en **Freeplay** y en el lobby del **modo online**. Solo se reconvierten si cambias algo.
+
+Los eventos y tipos de nota que V-Slice no tiene se ignoran (se tocan como notas normales). También puedes importar un chart suelto desde el Chart Editor.
