@@ -375,6 +375,11 @@ class OnlineMenuState extends MusicBeatState
     var songId:String = songIds[songIndex];
     var difficulty:String = difficulties.length > 0 ? difficulties[difficultyIndex] : Constants.DEFAULT_DIFFICULTY;
 
+    if (CharacterDataParser.fetchCharacterData(opponent.char) == null)
+    {
+      setStatus('${opponent.name} chose "${opponent.char}", which you don\'t have, so it will show as Boyfriend on your screen.', true);
+    }
+
     // The start message is the single source of truth for who plays as what.
     client.send({
       t: 'start',
@@ -404,7 +409,11 @@ class OnlineMenuState extends MusicBeatState
       return;
     }
 
-    launch(songId, difficulty, variation, Std.string(message.gc), Std.string(message.hc), Std.string(message.hn));
+    // Each player is always their own choice: never trust a copy of it that somebody else kept.
+    // The host's character comes from its own `start` message, because the host is the only one who knows it for sure.
+    var ownChar:String = client.profile.char;
+    var hostChar:String = Std.isOfType(message.hc, String) ? message.hc : (client.peer?.char ?? 'bf');
+    launch(songId, difficulty, variation, ownChar, hostChar, Std.string(message.hn));
   }
 
   function launch(songId:String, difficulty:String, variation:String, ownChar:String, opponentChar:String, opponentName:String):Void
@@ -484,14 +493,18 @@ class OnlineMenuState extends MusicBeatState
         setStatus('Joined $code, hosted by ${host.name}.');
 
       case PeerJoined(peer):
-        setStatus('${peer.name} joined!');
+        setStatus('${peer.name} joined as ${peer.char}!');
+        // Say again what we chose, so the host never works from an old copy.
+        client.setProfile(client.profile.name, client.profile.char);
         syncSelection();
 
       case PeerLeft:
         setStatus(client.isHost ? 'Your friend left.' : 'The host left, you are the host now.');
         launching = false;
 
-      case PeerProfile(_):
+      case PeerProfile(peer):
+        setStatus('${peer.name} is now ${peer.char}.');
+        refreshUi();
 
       case LeftRoom:
 
